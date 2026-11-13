@@ -7,9 +7,21 @@ session_set_cookie_params([
     'samesite' => 'Lax',
 ]);
 ini_set('session.use_strict_mode', '1');
-session_start();
-
 require_once __DIR__ . '/config.php';
+
+$db = null;
+$databaseError = false;
+try {
+    $db = ssg_db();
+} catch (PDOException | RuntimeException $exception) {
+    error_log('SSG Voting database setup failed: ' . $exception->getMessage());
+    $databaseError = true;
+}
+
+if ($db instanceof PDO && !session_set_save_handler(new SsgPostgresSessionHandler($db), true)) {
+    throw new RuntimeException('Unable to configure PostgreSQL session storage.');
+}
+session_start();
 
 function h(string $value): string
 {
@@ -49,21 +61,12 @@ function require_valid_password(string $password): void
     }
 }
 
-function has_ballots(mysqli $db): bool
+function has_ballots(PDO $db): bool
 {
-    return (int) $db->query('SELECT COUNT(*) AS total FROM ballots')->fetch_assoc()['total'] > 0;
+    return (int) ssg_one($db, 'SELECT COUNT(*) AS total FROM ballots')['total'] > 0;
 }
 
-$db = null;
-$databaseError = false;
-try {
-    $db = ssg_db();
-} catch (mysqli_sql_exception | RuntimeException $exception) {
-    error_log('SSG Voting database setup failed: ' . $exception->getMessage());
-    $databaseError = true;
-}
-
-if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         if (!hash_equals((string) ($_SESSION['csrf_token'] ?? ''), form_value('csrf_token'))) {
             throw new RuntimeException('Your session expired. Refresh the page and try again.');
@@ -71,17 +74,21 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $action = form_value('action');
         if ($action === 'setup_admin') {
-            if ((int) $db->query("SELECT COUNT(*) AS total FROM users WHERE role = 'admin'")->fetch_assoc()['total'] > 0) {
+            if ((int) ssg_one($db, "SELECT COUNT(*) AS total FROM users WHERE role = 'admin'")['total'] > 0) {
                 throw new RuntimeException('An administrator account already exists. Please sign in.');
             }
 
-            $lock = $db->query("SELECT GET_LOCK('ssg-voting-first-admin', 5) AS acquired")->fetch_assoc();
-            if ((int) ($lock['acquired'] ?? 0) !== 1) {
-                throw new RuntimeException('Initial setup is busy. Please try again.');
-            }
-
+            $db->beginTransaction();
             try {
-                if ((int) $db->query("SELECT COUNT(*) AS total FROM users WHERE role = 'admin'")->fetch_assoc()['total'] > 0) {
+                $lock = ssg_one(
+                    $db,
+                    'SELECT CASE WHEN pg_try_advisory_xact_lock(1981510295) THEN 1 ELSE 0 END AS acquired'
+                );
+                if ((int) ($lock['acquired'] ?? 0) !== 1) {
+                    throw new RuntimeException('Initial setup is busy. Please try again.');
+                }
+
+                if ((int) ssg_one($db, "SELECT COUNT(*) AS total FROM users WHERE role = 'admin'")['total'] > 0) {
                     throw new RuntimeException('An administrator account already exists. Please sign in.');
                 }
 
@@ -93,19 +100,27 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new RuntimeException('Enter a valid name and username (3–32 letters, numbers, dots, dashes, or underscores).');
                 }
 
-                $statement = $db->prepare("INSERT INTO users (username, display_name, password_hash, role) VALUES (?, ?, ?, 'admin')");
                 $hash = password_hash($password, PASSWORD_DEFAULT);
-                $statement->bind_param('sss', $username, $displayName, $hash);
-                $statement->execute();
+                $statement = ssg_execute(
+                    $db,
+                    "INSERT INTO users (username, display_name, password_hash, role)
+                    VALUES (?, ?, ?, 'admin') RETURNING id",
+                    [$username, $displayName, $hash]
+                );
+                $adminId = (int) $statement->fetchColumn();
+                $db->commit();
                 $_SESSION['user'] = [
-                    'id' => $db->insert_id,
+                    'id' => $adminId,
                     'username' => $username,
                     'display_name' => $displayName,
                     'role' => 'admin',
                 ];
                 session_regenerate_id(true);
-            } finally {
-                $db->query("SELECT RELEASE_LOCK('ssg-voting-first-admin')");
+            } catch (Throwable $exception) {
+                if ($db->inTransaction()) {
+                    $db->rollBack();
+                }
+                throw $exception;
             }
             app_redirect('Administrator account created. Add positions, candidates, and student accounts to begin.');
         }
@@ -113,10 +128,11 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'login') {
             $username = strtolower(form_value('username'));
             $password = form_secret('password');
-            $statement = $db->prepare('SELECT id, username, display_name, password_hash, role FROM users WHERE username = ?');
-            $statement->bind_param('s', $username);
-            $statement->execute();
-            $user = $statement->get_result()->fetch_assoc();
+            $user = ssg_one(
+                $db,
+                'SELECT id, username, display_name, password_hash, role FROM users WHERE username = ?',
+                [$username]
+            );
             if (!$user || !password_verify($password, $user['password_hash'])) {
                 throw new RuntimeException('The username or password is incorrect.');
             }
@@ -147,26 +163,27 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 throw new RuntimeException('Only signed-in student accounts can cast a ballot.');
             }
 
-            $db->begin_transaction();
+            $db->beginTransaction();
             try {
-                $settings = $db->query('SELECT is_open, results_published FROM election_settings WHERE id = 1 LOCK IN SHARE MODE')->fetch_assoc();
+                $settings = ssg_one(
+                    $db,
+                    'SELECT is_open, results_published FROM election_settings WHERE id = 1 FOR SHARE'
+                );
                 if (!$settings || (int) $settings['is_open'] !== 1 || (int) $settings['results_published'] === 1) {
                     throw new RuntimeException('Voting is not currently open.');
                 }
 
                 $voterId = (int) $_SESSION['user']['id'];
-                $participation = $db->prepare('INSERT INTO voter_participation (voter_id) VALUES (?)');
-                $participation->bind_param('i', $voterId);
                 try {
-                    $participation->execute();
-                } catch (mysqli_sql_exception $exception) {
-                    if ($exception->getCode() === 1062) {
+                    ssg_execute($db, 'INSERT INTO voter_participation (voter_id) VALUES (?)', [$voterId]);
+                } catch (PDOException $exception) {
+                    if ($exception->getCode() === '23505') {
                         throw new RuntimeException('This account has already submitted its ballot.');
                     }
                     throw $exception;
                 }
 
-                $positions = $db->query('SELECT id, name FROM positions ORDER BY id')->fetch_all(MYSQLI_ASSOC);
+                $positions = ssg_all($db, 'SELECT id, name FROM positions ORDER BY id');
                 if (!$positions) {
                     throw new RuntimeException('The election has no positions to vote for.');
                 }
@@ -175,8 +192,6 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new RuntimeException('Please select one candidate for every position.');
                 }
 
-                $candidateCheck = $db->prepare('SELECT id FROM candidates WHERE id = ? AND position_id = ?');
-                $insert = $db->prepare('INSERT INTO ballots (position_id, candidate_id) VALUES (?, ?)');
                 foreach ($positions as $position) {
                     $positionId = (int) $position['id'];
                     $choice = $choices[(string) $positionId] ?? null;
@@ -184,17 +199,22 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
                         throw new RuntimeException('Please select one candidate for every position.');
                     }
                     $candidateId = (int) $choice;
-                    $candidateCheck->bind_param('ii', $candidateId, $positionId);
-                    $candidateCheck->execute();
-                    if (!$candidateCheck->get_result()->fetch_assoc()) {
+                    if (!ssg_one(
+                        $db,
+                        'SELECT id FROM candidates WHERE id = ? AND position_id = ?',
+                        [$candidateId, $positionId]
+                    )) {
                         throw new RuntimeException('One of your selections is invalid. Please review your ballot.');
                     }
-                    $insert->bind_param('ii', $positionId, $candidateId);
-                    $insert->execute();
+                    ssg_execute(
+                        $db,
+                        'INSERT INTO ballots (position_id, candidate_id) VALUES (?, ?)',
+                        [$positionId, $candidateId]
+                    );
                 }
                 $db->commit();
             } catch (Throwable $exception) {
-                $db->rollback();
+                $db->rollBack();
                 throw $exception;
             }
             app_redirect('Your ballot was recorded. You can only vote once in this election.');
@@ -212,10 +232,13 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!preg_match('/\A[a-z0-9._-]{3,32}\z/', $username) || $displayName === '' || strlen($displayName) > 100) {
                 throw new RuntimeException('Enter a valid student name and username.');
             }
-            $statement = $db->prepare("INSERT INTO users (username, display_name, password_hash, role) VALUES (?, ?, ?, 'student')");
             $hash = password_hash($password, PASSWORD_DEFAULT);
-            $statement->bind_param('sss', $username, $displayName, $hash);
-            $statement->execute();
+            ssg_execute(
+                $db,
+                "INSERT INTO users (username, display_name, password_hash, role)
+                VALUES (?, ?, ?, 'student')",
+                [$username, $displayName, $hash]
+            );
             app_redirect('Student account created. Share the username and password securely with the student.');
         }
 
@@ -228,9 +251,9 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
             'admin_delete_candidate',
         ];
         if (in_array($action, $candidateActions, true)) {
-            $db->begin_transaction();
+            $db->beginTransaction();
             try {
-                $settings = $db->query('SELECT is_open FROM election_settings WHERE id = 1 FOR UPDATE')->fetch_assoc();
+                $settings = ssg_one($db, 'SELECT is_open FROM election_settings WHERE id = 1 FOR UPDATE');
                 if ((int) $settings['is_open'] === 1) {
                     throw new RuntimeException('Close voting before editing the election.');
                 }
@@ -243,9 +266,7 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($name === '' || strlen($name) > 80) {
                         throw new RuntimeException('Position names must be between 1 and 80 characters.');
                     }
-                    $statement = $db->prepare('INSERT INTO positions (name) VALUES (?)');
-                    $statement->bind_param('s', $name);
-                    $statement->execute();
+                    ssg_execute($db, 'INSERT INTO positions (name) VALUES (?)', [$name]);
                     $db->commit();
                     app_redirect('Position added.');
                 }
@@ -257,14 +278,9 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
                         throw new RuntimeException('Enter a valid position name.');
                     }
                     $positionId = (int) $positionIdText;
-                    $statement = $db->prepare('UPDATE positions SET name = ? WHERE id = ?');
-                    $statement->bind_param('si', $name, $positionId);
-                    $statement->execute();
-                    if ($statement->affected_rows === 0) {
-                        $check = $db->prepare('SELECT id FROM positions WHERE id = ?');
-                        $check->bind_param('i', $positionId);
-                        $check->execute();
-                        if (!$check->get_result()->fetch_assoc()) {
+                    $statement = ssg_execute($db, 'UPDATE positions SET name = ? WHERE id = ?', [$name, $positionId]);
+                    if ($statement->rowCount() === 0) {
+                        if (!ssg_one($db, 'SELECT id FROM positions WHERE id = ?', [$positionId])) {
                             throw new RuntimeException('That position no longer exists.');
                         }
                     }
@@ -278,18 +294,11 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
                         throw new RuntimeException('Choose a valid position to remove.');
                     }
                     $positionId = (int) $positionIdText;
-                    $check = $db->prepare('SELECT id FROM positions WHERE id = ?');
-                    $check->bind_param('i', $positionId);
-                    $check->execute();
-                    if (!$check->get_result()->fetch_assoc()) {
+                    if (!ssg_one($db, 'SELECT id FROM positions WHERE id = ?', [$positionId])) {
                         throw new RuntimeException('That position no longer exists.');
                     }
-                    $deleteCandidates = $db->prepare('DELETE FROM candidates WHERE position_id = ?');
-                    $deleteCandidates->bind_param('i', $positionId);
-                    $deleteCandidates->execute();
-                    $statement = $db->prepare('DELETE FROM positions WHERE id = ?');
-                    $statement->bind_param('i', $positionId);
-                    $statement->execute();
+                    ssg_execute($db, 'DELETE FROM candidates WHERE position_id = ?', [$positionId]);
+                    ssg_execute($db, 'DELETE FROM positions WHERE id = ?', [$positionId]);
                     $db->commit();
                     app_redirect('Position and its candidates removed.');
                 }
@@ -306,15 +315,14 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                     $candidateId = (int) $candidateIdText;
                     $positionId = (int) $positionIdText;
-                    $check = $db->prepare('SELECT id FROM candidates WHERE id = ?');
-                    $check->bind_param('i', $candidateId);
-                    $check->execute();
-                    if (!$check->get_result()->fetch_assoc()) {
+                    if (!ssg_one($db, 'SELECT id FROM candidates WHERE id = ?', [$candidateId])) {
                         throw new RuntimeException('That candidate no longer exists.');
                     }
-                    $statement = $db->prepare('UPDATE candidates SET position_id = ?, name = ?, statement = ? WHERE id = ?');
-                    $statement->bind_param('issi', $positionId, $name, $statementText, $candidateId);
-                    $statement->execute();
+                    ssg_execute(
+                        $db,
+                        'UPDATE candidates SET position_id = ?, name = ?, statement = ? WHERE id = ?',
+                        [$positionId, $name, $statementText, $candidateId]
+                    );
                     $db->commit();
                     app_redirect('Candidate updated.');
                 }
@@ -325,10 +333,8 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
                         throw new RuntimeException('Choose a valid candidate to remove.');
                     }
                     $candidateId = (int) $candidateIdText;
-                    $statement = $db->prepare('DELETE FROM candidates WHERE id = ?');
-                    $statement->bind_param('i', $candidateId);
-                    $statement->execute();
-                    if ($statement->affected_rows === 0) {
+                    $statement = ssg_execute($db, 'DELETE FROM candidates WHERE id = ?', [$candidateId]);
+                    if ($statement->rowCount() === 0) {
                         throw new RuntimeException('That candidate no longer exists.');
                     }
                     $db->commit();
@@ -342,12 +348,14 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     throw new RuntimeException('Enter a candidate name and statement (up to 3,000 characters), and choose a position.');
                 }
                 $positionId = (int) $positionIdText;
-                $statement = $db->prepare('INSERT INTO candidates (position_id, name, statement) VALUES (?, ?, ?)');
-                $statement->bind_param('iss', $positionId, $name, $statementText);
-                $statement->execute();
+                ssg_execute(
+                    $db,
+                    'INSERT INTO candidates (position_id, name, statement) VALUES (?, ?, ?)',
+                    [$positionId, $name, $statementText]
+                );
                 $db->commit();
             } catch (Throwable $exception) {
-                $db->rollback();
+                $db->rollBack();
                 throw $exception;
             }
             app_redirect('Candidate added.');
@@ -355,9 +363,9 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($action === 'admin_election') {
             $mode = form_value('mode');
-            $db->begin_transaction();
+            $db->beginTransaction();
             try {
-                $settings = $db->query('SELECT is_open, results_published FROM election_settings WHERE id = 1 FOR UPDATE')->fetch_assoc();
+                $settings = ssg_one($db, 'SELECT is_open, results_published FROM election_settings WHERE id = 1 FOR UPDATE');
                 if ($mode === 'open') {
                     if ((int) $settings['results_published'] === 1) {
                         throw new RuntimeException('Results have already been published; this election cannot be reopened.');
@@ -365,54 +373,55 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     if (has_ballots($db)) {
                         throw new RuntimeException('This election has already accepted ballots and cannot be reopened.');
                     }
-                    $uncontested = (int) $db->query(
+                    $uncontested = (int) ssg_one(
+                        $db,
                         'SELECT COUNT(*) AS total FROM (
                             SELECT p.id FROM positions p
                             LEFT JOIN candidates c ON c.position_id = p.id
                             GROUP BY p.id HAVING COUNT(c.id) < 2
                         ) AS incomplete'
-                    )->fetch_assoc()['total'];
-                    $positionCount = (int) $db->query('SELECT COUNT(*) AS total FROM positions')->fetch_assoc()['total'];
+                    )['total'];
+                    $positionCount = (int) ssg_one($db, 'SELECT COUNT(*) AS total FROM positions')['total'];
                     if ($positionCount === 0 || $uncontested > 0) {
                         throw new RuntimeException('Add at least two candidates to every position before opening voting.');
                     }
-                    $db->query('UPDATE election_settings SET is_open = 1 WHERE id = 1');
+                    $db->exec('UPDATE election_settings SET is_open = 1 WHERE id = 1');
                 } elseif ($mode === 'close') {
-                    $db->query('UPDATE election_settings SET is_open = 0 WHERE id = 1');
+                    $db->exec('UPDATE election_settings SET is_open = 0 WHERE id = 1');
                 } else {
                     throw new RuntimeException('Choose a valid election action.');
                 }
                 $db->commit();
             } catch (Throwable $exception) {
-                $db->rollback();
+                $db->rollBack();
                 throw $exception;
             }
             app_redirect($mode === 'open' ? 'Voting is now open.' : 'Voting is now closed.');
         }
 
         if ($action === 'admin_publish_results') {
-            $db->begin_transaction();
+            $db->beginTransaction();
             try {
-                $settings = $db->query('SELECT is_open, results_published FROM election_settings WHERE id = 1 FOR UPDATE')->fetch_assoc();
+                $settings = ssg_one($db, 'SELECT is_open, results_published FROM election_settings WHERE id = 1 FOR UPDATE');
                 if ((int) $settings['is_open'] === 1) {
                     throw new RuntimeException('Close voting before publishing results.');
                 }
                 if (has_ballots($db) === false) {
                     throw new RuntimeException('There are no ballots to publish yet.');
                 }
-                $db->query('UPDATE election_settings SET results_published = 1 WHERE id = 1');
+                $db->exec('UPDATE election_settings SET results_published = 1 WHERE id = 1');
                 $db->commit();
             } catch (Throwable $exception) {
-                $db->rollback();
+                $db->rollBack();
                 throw $exception;
             }
             app_redirect('Results are now available to students.');
         }
 
         throw new RuntimeException('That action is not available.');
-    } catch (mysqli_sql_exception $exception) {
+    } catch (PDOException $exception) {
         error_log('SSG Voting database operation failed: ' . $exception->getMessage());
-        $message = $exception->getCode() === 1062
+        $message = $exception->getCode() === '23505'
             ? 'That username, position, or ballot already exists.'
             : 'The request could not be saved. Check the form and try again.';
         app_redirect($message, 'error');
@@ -440,19 +449,21 @@ $studentCount = 0;
 $turnoutPercent = 0.0;
 $candidateCounts = [];
 
-if ($db instanceof mysqli) {
-    $adminExists = (int) $db->query("SELECT COUNT(*) AS total FROM users WHERE role = 'admin'")->fetch_assoc()['total'] > 0;
-    $settings = $db->query('SELECT is_open, results_published FROM election_settings WHERE id = 1')->fetch_assoc();
-    $positions = $db->query('SELECT id, name FROM positions ORDER BY id')->fetch_all(MYSQLI_ASSOC);
-    $candidateRows = $db->query(
+if ($db instanceof PDO) {
+    $adminExists = (int) ssg_one($db, "SELECT COUNT(*) AS total FROM users WHERE role = 'admin'")['total'] > 0;
+    $settings = ssg_one($db, 'SELECT is_open, results_published FROM election_settings WHERE id = 1');
+    $positions = ssg_all($db, 'SELECT id, name FROM positions ORDER BY id');
+    $candidateRows = ssg_all(
+        $db,
         'SELECT c.id, c.position_id, c.name, c.statement, p.name AS position_name
          FROM candidates c JOIN positions p ON p.id = c.position_id
          ORDER BY p.id, c.name'
-    )->fetch_all(MYSQLI_ASSOC);
-    $ballotCount = (int) $db->query('SELECT COUNT(*) AS total FROM voter_participation')->fetch_assoc()['total'];
+    );
+    $ballotCount = (int) ssg_one($db, 'SELECT COUNT(*) AS total FROM voter_participation')['total'];
 
     if ((int) $settings['results_published'] === 1) {
-        $results = $db->query(
+        $results = ssg_all(
+            $db,
             'SELECT p.id AS position_id, p.name AS position_name, c.id AS candidate_id, c.name AS candidate_name,
                     c.statement, COUNT(b.candidate_id) AS votes
              FROM positions p
@@ -460,19 +471,23 @@ if ($db instanceof mysqli) {
              LEFT JOIN ballots b ON b.candidate_id = c.id
              GROUP BY p.id, p.name, c.id, c.name, c.statement
              ORDER BY p.id, votes DESC, c.name'
-        )->fetch_all(MYSQLI_ASSOC);
+        );
     }
 
     if ($currentUser && $currentUser['role'] === 'student') {
         $voterId = (int) $currentUser['id'];
-        $statement = $db->prepare('SELECT COUNT(*) AS total FROM voter_participation WHERE voter_id = ?');
-        $statement->bind_param('i', $voterId);
-        $statement->execute();
-        $alreadyVoted = (int) $statement->get_result()->fetch_assoc()['total'] > 0;
+        $alreadyVoted = (int) ssg_one(
+            $db,
+            'SELECT COUNT(*) AS total FROM voter_participation WHERE voter_id = ?',
+            [$voterId]
+        )['total'] > 0;
     }
 
     if ($currentUser && $currentUser['role'] === 'admin') {
-        $studentAccounts = $db->query("SELECT username, display_name, created_at FROM users WHERE role = 'student' ORDER BY display_name")->fetch_all(MYSQLI_ASSOC);
+        $studentAccounts = ssg_all(
+            $db,
+            "SELECT username, display_name, created_at FROM users WHERE role = 'student' ORDER BY display_name"
+        );
         $studentCount = count($studentAccounts);
         $turnoutPercent = $studentCount > 0 ? ($ballotCount / $studentCount) * 100 : 0;
         foreach ($positions as $position) {
@@ -594,8 +609,8 @@ $steps = [
                 <div class="portal-card setup-card">
                     <p class="eyebrow section-eyebrow">Database setup</p>
                     <h2>Connect the voting database</h2>
-                    <p>SSGVote could not connect to MySQL. Check that MySQL is running and that the database settings are correct.</p>
-                    <p class="help-text">Defaults are host <code>127.0.0.1</code>, port <code>3306</code>, database <code>ssg_voting</code>, user <code>root</code>, and a blank password. Set <code>DB_HOST</code>, <code>DB_PORT</code>, <code>DB_NAME</code>, <code>DB_USER</code>, and <code>DB_PASSWORD</code> in your PHP environment to change them. The MySQL user needs permission to create the database on first run.</p>
+                    <p>SSGVote could not connect to PostgreSQL. Check that the database is running and that the connection settings are correct.</p>
+                    <p class="help-text">Set <code>DATABASE_URL</code> to a PostgreSQL connection URL, or configure <code>PGHOST</code>, <code>PGPORT</code>, <code>PGDATABASE</code>, <code>PGUSER</code>, and <code>PGPASSWORD</code>. The database user needs permission to create tables on first run.</p>
                 </div>
             <?php elseif (!$adminExists): ?>
                 <div class="portal-card setup-card">
