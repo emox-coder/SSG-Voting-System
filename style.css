@@ -525,6 +525,10 @@ button { font: inherit; }
 .status-closed { background: #eef2f6; color: #5c6e83; }
 .status-note { color: #167447 !important; font-weight: 700; }
 .admin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 17px; }
+.admin-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+.metric-card { display: flex; min-width: 0; min-height: 109px; flex-direction: column; justify-content: center; gap: 5px; border: 1px solid #e8eef5; border-radius: 12px; background: #fff; padding: 16px 18px; box-shadow: var(--shadow); }
+.metric-label, .metric-detail { color: var(--muted); font-size: 11px; }
+.metric-card strong { color: var(--navy); font-size: 25px; line-height: 1.15; }
 .election-setup-card { grid-column: 1 / -1; }
 .stack-form { display: flex; flex-direction: column; align-items: stretch; gap: 12px; margin-top: 15px; }
 .stack-form .button { align-self: flex-start; }
@@ -538,6 +542,18 @@ button { font: inherit; }
 .account-list small, .candidate-list small, .result-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .candidate-list li { align-items: flex-start; flex-direction: column; gap: 0; }
 .candidate-list p { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.management-list li { gap: 10px; }
+.management-item-heading { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 12px; }
+.management-item-heading small { margin-top: 0; text-align: right; }
+.management-actions { display: flex; width: 100%; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+.management-actions > form { margin: 0; }
+.management-details { min-width: 100px; flex: 1 1 180px; }
+.management-details summary { width: fit-content; border: 1px solid #d7e5f2; border-radius: 7px; background: #f3f8fd; color: var(--navy); padding: 8px 12px; font-size: 11px; font-weight: 800; cursor: pointer; }
+.management-details[open] { width: 100%; flex-basis: 100%; }
+.management-details[open] summary { margin-bottom: 10px; }
+.management-details .stack-form { max-width: 580px; margin-top: 0; padding: 13px; border-radius: 9px; background: #f7faff; }
+.button-danger { border-color: #f0d1ce; background: #fff5f4; color: #a23c34; }
+.button-danger:hover { background: #ffe8e5; }
 .results-card { margin-top: 18px; }
 .result-position { margin-top: 20px; }
 .result-position h4 { margin: 0 0 9px; padding-bottom: 8px; border-bottom: 1px solid #e9eff5; }
@@ -566,6 +582,9 @@ button { font: inherit; }
 @media (max-width: 680px) {
     .portal-area { width: calc(100% - 40px); padding-top: 37px; }
     .portal-card { padding: 21px; }
+    .admin-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+    .metric-card { min-height: 96px; padding: 13px; }
+    .metric-card strong { font-size: 22px; }
     .login-card, .admin-grid, .management-forms, .ballot-positions { grid-template-columns: 1fr; }
     .login-card { gap: 12px; }
     .election-setup-card { grid-column: auto; }

@@ -13,7 +13,7 @@ A standalone PHP and MySQL student-voting prototype. It supports administrator a
    
 
 3. Open `http://127.0.0.1:8000/`. On first visit, create the administrator account.
-4. Sign in as the administrator. Add positions, at least two candidates for every position, and student accounts.
+4. Sign in as the administrator. Add positions, at least two candidates for every position, and student accounts. The dashboard shows account totals and turnout, and lets you edit or remove positions and candidates before the first ballot is submitted.
 5. Open voting. Each student signs in and selects one candidate per position. Close voting and publish results when the election ends.
 
 The default local database connection is `127.0.0.1:3306`, database `ssg_voting`, user `root`, and a blank password (the usual local XAMPP defaults). The app creates the database and tables automatically when needed. For a different MySQL setup, provide `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, and `DB_PASSWORD` as PHP environment variables before starting the server. If the database already exists, the configured MySQL account only needs access to it; creating a new database requires the corresponding MySQL privilege.

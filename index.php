@@ -219,7 +219,15 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
             app_redirect('Student account created. Share the username and password securely with the student.');
         }
 
-        if ($action === 'admin_add_position' || $action === 'admin_add_candidate') {
+        $candidateActions = [
+            'admin_add_position',
+            'admin_add_candidate',
+            'admin_edit_position',
+            'admin_delete_position',
+            'admin_edit_candidate',
+            'admin_delete_candidate',
+        ];
+        if (in_array($action, $candidateActions, true)) {
             $db->begin_transaction();
             try {
                 $settings = $db->query('SELECT is_open FROM election_settings WHERE id = 1 FOR UPDATE')->fetch_assoc();
@@ -240,6 +248,91 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
                     $statement->execute();
                     $db->commit();
                     app_redirect('Position added.');
+                }
+
+                if ($action === 'admin_edit_position') {
+                    $positionIdText = form_value('position_id');
+                    $name = form_value('position_name');
+                    if (!ctype_digit($positionIdText) || $name === '' || strlen($name) > 80) {
+                        throw new RuntimeException('Enter a valid position name.');
+                    }
+                    $positionId = (int) $positionIdText;
+                    $statement = $db->prepare('UPDATE positions SET name = ? WHERE id = ?');
+                    $statement->bind_param('si', $name, $positionId);
+                    $statement->execute();
+                    if ($statement->affected_rows === 0) {
+                        $check = $db->prepare('SELECT id FROM positions WHERE id = ?');
+                        $check->bind_param('i', $positionId);
+                        $check->execute();
+                        if (!$check->get_result()->fetch_assoc()) {
+                            throw new RuntimeException('That position no longer exists.');
+                        }
+                    }
+                    $db->commit();
+                    app_redirect('Position updated.');
+                }
+
+                if ($action === 'admin_delete_position') {
+                    $positionIdText = form_value('position_id');
+                    if (!ctype_digit($positionIdText)) {
+                        throw new RuntimeException('Choose a valid position to remove.');
+                    }
+                    $positionId = (int) $positionIdText;
+                    $check = $db->prepare('SELECT id FROM positions WHERE id = ?');
+                    $check->bind_param('i', $positionId);
+                    $check->execute();
+                    if (!$check->get_result()->fetch_assoc()) {
+                        throw new RuntimeException('That position no longer exists.');
+                    }
+                    $deleteCandidates = $db->prepare('DELETE FROM candidates WHERE position_id = ?');
+                    $deleteCandidates->bind_param('i', $positionId);
+                    $deleteCandidates->execute();
+                    $statement = $db->prepare('DELETE FROM positions WHERE id = ?');
+                    $statement->bind_param('i', $positionId);
+                    $statement->execute();
+                    $db->commit();
+                    app_redirect('Position and its candidates removed.');
+                }
+
+                if ($action === 'admin_edit_candidate') {
+                    $candidateIdText = form_value('candidate_id');
+                    $positionIdText = form_value('position_id');
+                    $name = form_value('candidate_name');
+                    $statementText = form_value('candidate_statement');
+                    if (!ctype_digit($candidateIdText) || !ctype_digit($positionIdText)
+                        || $name === '' || strlen($name) > 100
+                        || $statementText === '' || strlen($statementText) > 3000) {
+                        throw new RuntimeException('Enter a valid candidate name, statement, and position.');
+                    }
+                    $candidateId = (int) $candidateIdText;
+                    $positionId = (int) $positionIdText;
+                    $check = $db->prepare('SELECT id FROM candidates WHERE id = ?');
+                    $check->bind_param('i', $candidateId);
+                    $check->execute();
+                    if (!$check->get_result()->fetch_assoc()) {
+                        throw new RuntimeException('That candidate no longer exists.');
+                    }
+                    $statement = $db->prepare('UPDATE candidates SET position_id = ?, name = ?, statement = ? WHERE id = ?');
+                    $statement->bind_param('issi', $positionId, $name, $statementText, $candidateId);
+                    $statement->execute();
+                    $db->commit();
+                    app_redirect('Candidate updated.');
+                }
+
+                if ($action === 'admin_delete_candidate') {
+                    $candidateIdText = form_value('candidate_id');
+                    if (!ctype_digit($candidateIdText)) {
+                        throw new RuntimeException('Choose a valid candidate to remove.');
+                    }
+                    $candidateId = (int) $candidateIdText;
+                    $statement = $db->prepare('DELETE FROM candidates WHERE id = ?');
+                    $statement->bind_param('i', $candidateId);
+                    $statement->execute();
+                    if ($statement->affected_rows === 0) {
+                        throw new RuntimeException('That candidate no longer exists.');
+                    }
+                    $db->commit();
+                    app_redirect('Candidate removed.');
                 }
 
                 $positionIdText = form_value('position_id');
@@ -343,6 +436,9 @@ $results = [];
 $studentAccounts = [];
 $alreadyVoted = false;
 $ballotCount = 0;
+$studentCount = 0;
+$turnoutPercent = 0.0;
+$candidateCounts = [];
 
 if ($db instanceof mysqli) {
     $adminExists = (int) $db->query("SELECT COUNT(*) AS total FROM users WHERE role = 'admin'")->fetch_assoc()['total'] > 0;
@@ -377,6 +473,15 @@ if ($db instanceof mysqli) {
 
     if ($currentUser && $currentUser['role'] === 'admin') {
         $studentAccounts = $db->query("SELECT username, display_name, created_at FROM users WHERE role = 'student' ORDER BY display_name")->fetch_all(MYSQLI_ASSOC);
+        $studentCount = count($studentAccounts);
+        $turnoutPercent = $studentCount > 0 ? ($ballotCount / $studentCount) * 100 : 0;
+        foreach ($positions as $position) {
+            $candidateCounts[(int) $position['id']] = 0;
+        }
+        foreach ($candidateRows as $candidate) {
+            $positionId = (int) $candidate['position_id'];
+            $candidateCounts[$positionId] = ($candidateCounts[$positionId] ?? 0) + 1;
+        }
     }
 }
 
@@ -531,6 +636,28 @@ $steps = [
                         <?= (int) $settings['is_open'] === 1 ? 'Voting is open' : 'Voting is closed' ?>
                     </span>
                 </div>
+                <div class="admin-metrics" aria-label="Election overview">
+                    <article class="metric-card">
+                        <span class="metric-label">Student accounts</span>
+                        <strong><?= number_format($studentCount) ?></strong>
+                        <span class="metric-detail">eligible voters</span>
+                    </article>
+                    <article class="metric-card">
+                        <span class="metric-label">Ballots submitted</span>
+                        <strong><?= number_format($ballotCount) ?></strong>
+                        <span class="metric-detail">students participated</span>
+                    </article>
+                    <article class="metric-card">
+                        <span class="metric-label">Turnout</span>
+                        <strong><?= number_format($turnoutPercent, 1) ?>%</strong>
+                        <span class="metric-detail">of student accounts</span>
+                    </article>
+                    <article class="metric-card">
+                        <span class="metric-label">Election setup</span>
+                        <strong><?= count($positions) ?></strong>
+                        <span class="metric-detail"><?= count($candidateRows) ?> candidates across positions</span>
+                    </article>
+                </div>
                 <div class="admin-grid">
                     <section class="portal-card election-card">
                         <p class="eyebrow section-eyebrow">Election controls</p>
@@ -616,11 +743,73 @@ $steps = [
                                 </form>
                             </div>
                         <?php endif; ?>
+                        <?php if ($positions): ?>
+                            <h4>Manage positions</h4>
+                            <ul class="candidate-list management-list">
+                                <?php foreach ($positions as $position): ?>
+                                    <li>
+                                        <span class="management-item-heading">
+                                            <strong><?= h($position['name']) ?></strong>
+                                            <small><?= (int) ($candidateCounts[(int) $position['id']] ?? 0) ?> candidate<?= (int) ($candidateCounts[(int) $position['id']] ?? 0) === 1 ? '' : 's' ?></small>
+                                        </span>
+                                        <?php if ((int) $settings['is_open'] === 0 && $ballotCount === 0): ?>
+                                            <div class="management-actions">
+                                                <details class="management-details">
+                                                    <summary>Edit</summary>
+                                                    <form method="post" class="stack-form">
+                                                        <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                                                        <input type="hidden" name="action" value="admin_edit_position">
+                                                        <input type="hidden" name="position_id" value="<?= (int) $position['id'] ?>">
+                                                        <label>Position name<input name="position_name" maxlength="80" value="<?= h($position['name']) ?>" required></label>
+                                                        <button class="button button-secondary" type="submit">Save position</button>
+                                                    </form>
+                                                </details>
+                                                <form method="post" data-confirm-delete="Remove this position and all its candidates?">
+                                                    <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                                                    <input type="hidden" name="action" value="admin_delete_position">
+                                                    <input type="hidden" name="position_id" value="<?= (int) $position['id'] ?>">
+                                                    <button class="button button-danger" type="submit">Remove</button>
+                                                </form>
+                                            </div>
+                                        <?php endif; ?>
+                                    </li>
+                                <?php endforeach; ?>
+                            </ul>
+                        <?php endif; ?>
                         <h4>Candidate roster</h4>
                         <?php if ($candidateRows): ?>
                             <ul class="candidate-list">
                                 <?php foreach ($candidateRows as $candidate): ?>
-                                    <li><span><strong><?= h($candidate['name']) ?></strong><small><?= h($candidate['position_name']) ?></small></span><p><?= h($candidate['statement']) ?></p></li>
+                                    <li>
+                                        <span class="management-item-heading"><strong><?= h($candidate['name']) ?></strong><small><?= h($candidate['position_name']) ?></small></span>
+                                        <p><?= h($candidate['statement']) ?></p>
+                                        <?php if ((int) $settings['is_open'] === 0 && $ballotCount === 0): ?>
+                                            <div class="management-actions">
+                                                <details class="management-details">
+                                                    <summary>Edit</summary>
+                                                    <form method="post" class="stack-form">
+                                                        <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                                                        <input type="hidden" name="action" value="admin_edit_candidate">
+                                                        <input type="hidden" name="candidate_id" value="<?= (int) $candidate['id'] ?>">
+                                                        <label>Position<select name="position_id" required>
+                                                            <?php foreach ($positions as $position): ?>
+                                                                <option value="<?= (int) $position['id'] ?>" <?= (int) $position['id'] === (int) $candidate['position_id'] ? 'selected' : '' ?>><?= h($position['name']) ?></option>
+                                                            <?php endforeach; ?>
+                                                        </select></label>
+                                                        <label>Candidate name<input name="candidate_name" maxlength="100" value="<?= h($candidate['name']) ?>" required></label>
+                                                        <label>Candidate statement<textarea name="candidate_statement" maxlength="3000" rows="3" required><?= h($candidate['statement']) ?></textarea></label>
+                                                        <button class="button button-secondary" type="submit">Save candidate</button>
+                                                    </form>
+                                                </details>
+                                                <form method="post" data-confirm-delete="Remove this candidate from the election?">
+                                                    <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                                                    <input type="hidden" name="action" value="admin_delete_candidate">
+                                                    <input type="hidden" name="candidate_id" value="<?= (int) $candidate['id'] ?>">
+                                                    <button class="button button-danger" type="submit">Remove</button>
+                                                </form>
+                                            </div>
+                                        <?php endif; ?>
+                                    </li>
                                 <?php endforeach; ?>
                             </ul>
                         <?php else: ?>
