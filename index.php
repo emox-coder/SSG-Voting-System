@@ -131,37 +131,6 @@ if ($db instanceof mysqli && $_SERVER['REQUEST_METHOD'] === 'POST') {
             app_redirect('Welcome, ' . $user['display_name'] . '.');
         }
 
-        if ($action === 'student_register') {
-            $username = strtolower(form_value('username'));
-            $displayName = form_value('display_name');
-            $password = form_secret('password');
-            require_valid_password($password);
-            if (!preg_match('/\A[a-z0-9._-]{3,32}\z/', $username) || $displayName === '' || strlen($displayName) > 100) {
-                throw new RuntimeException('Enter a valid name and username (3–32 letters, numbers, dots, dashes, or underscores).');
-            }
-
-            $statement = $db->prepare("INSERT INTO users (username, display_name, password_hash, role) VALUES (?, ?, ?, 'student')");
-            $hash = password_hash($password, PASSWORD_DEFAULT);
-            $statement->bind_param('sss', $username, $displayName, $hash);
-            try {
-                $statement->execute();
-            } catch (mysqli_sql_exception $exception) {
-                if ($exception->getCode() === 1062) {
-                    throw new RuntimeException('That username is already taken. Please choose another.');
-                }
-                throw $exception;
-            }
-
-            session_regenerate_id(true);
-            $_SESSION['user'] = [
-                'id' => $db->insert_id,
-                'username' => $username,
-                'display_name' => $displayName,
-                'role' => 'student',
-            ];
-            app_redirect('Your student account is ready. Welcome, ' . $displayName . '!');
-        }
-
         if ($action === 'logout') {
             $_SESSION = [];
             if (ini_get('session.use_cookies')) {
@@ -542,7 +511,7 @@ $steps = [
                     <div class="portal-intro">
                         <p class="eyebrow section-eyebrow">Ready when you are</p>
                         <h2>Sign in to SSGVote</h2>
-                        <p>Sign in to vote when the election is open, or create your own student account below.</p>
+                        <p>Sign in with the account provided by your election administrator.</p>
                     </div>
                     <form method="post" class="form-grid login-form">
                         <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
@@ -551,20 +520,6 @@ $steps = [
                         <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
                         <button class="button button-primary form-wide" type="submit">Sign in</button>
                     </form>
-                    <div class="registration-panel">
-                        <p class="eyebrow section-eyebrow">New to SSGVote?</p>
-                        <h3>Create your student account</h3>
-                        <p class="help-text">Register with your name and choose a username and password. Your account will be ready to use right away.</p>
-                        <form method="post" class="form-grid registration-form">
-                            <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
-                            <input type="hidden" name="action" value="student_register">
-                            <label>Full name<input name="display_name" maxlength="100" autocomplete="name" required></label>
-                            <label>Choose a username<input name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" autocomplete="username" required></label>
-                            <label class="form-wide">Choose a password <span class="label-hint">(10–72 characters)</span><input type="password" name="password" minlength="10" maxlength="72" autocomplete="new-password" required></label>
-                            <button class="button button-secondary form-wide" type="submit">Create student account</button>
-                        </form>
-                        <p class="registration-note">Self-registration does not verify school enrollment. Only eligible students should create accounts; voting is controlled by the election administrator.</p>
-                    </div>
                 </div>
             <?php elseif ($currentUser['role'] === 'admin'): ?>
                 <div class="portal-heading">
