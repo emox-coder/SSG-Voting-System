@@ -540,6 +540,9 @@ button { font: inherit; }
 .account-list li, .candidate-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 1px solid #edf1f6; border-radius: 9px; padding: 10px 12px; }
 .account-list strong, .candidate-list strong, .result-row strong { display: block; color: var(--navy); font-size: 12px; }
 .account-list small, .candidate-list small, .result-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.account-delete-form { margin: 0; }
+.account-delete-form .button { min-height: 34px; padding: 7px 10px; }
+.account-status { color: var(--muted); font-size: 11px; font-weight: 700; }
 .candidate-list li { align-items: flex-start; flex-direction: column; gap: 0; }
 .candidate-list p { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .management-list li { gap: 10px; }

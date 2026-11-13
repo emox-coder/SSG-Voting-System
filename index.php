@@ -174,6 +174,9 @@ if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 $voterId = (int) $_SESSION['user']['id'];
+                if (!ssg_one($db, "SELECT id FROM users WHERE id = ? AND role = 'student'", [$voterId])) {
+                    throw new RuntimeException('This student account is no longer available. Please sign in again.');
+                }
                 try {
                     ssg_execute($db, 'INSERT INTO voter_participation (voter_id) VALUES (?)', [$voterId]);
                 } catch (PDOException $exception) {
@@ -240,6 +243,34 @@ if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 [$username, $displayName, $hash]
             );
             app_redirect('Student account created. Share the username and password securely with the student.');
+        }
+
+        if ($action === 'admin_delete_student') {
+            $studentIdText = form_value('student_id');
+            if (!ctype_digit($studentIdText)) {
+                throw new RuntimeException('Choose a valid student account to delete.');
+            }
+
+            $studentId = (int) $studentIdText;
+            $db->beginTransaction();
+            try {
+                ssg_one($db, 'SELECT id FROM election_settings WHERE id = 1 FOR UPDATE');
+                if (!ssg_one($db, "SELECT id FROM users WHERE id = ? AND role = 'student' FOR UPDATE", [$studentId])) {
+                    throw new RuntimeException('That student account no longer exists.');
+                }
+                if (ssg_one($db, 'SELECT voter_id FROM voter_participation WHERE voter_id = ?', [$studentId])) {
+                    throw new RuntimeException('Students who have already voted cannot be deleted, to protect election records.');
+                }
+
+                ssg_execute($db, "DELETE FROM users WHERE id = ? AND role = 'student'", [$studentId]);
+                $db->commit();
+            } catch (Throwable $exception) {
+                if ($db->inTransaction()) {
+                    $db->rollBack();
+                }
+                throw $exception;
+            }
+            app_redirect('Student account deleted.');
         }
 
         $candidateActions = [
@@ -437,6 +468,13 @@ $csrfToken = (string) $_SESSION['csrf_token'];
 $flash = $_SESSION['flash'] ?? null;
 unset($_SESSION['flash']);
 $currentUser = $_SESSION['user'] ?? null;
+if ($db instanceof PDO && is_array($currentUser) && isset($currentUser['id'])) {
+    if (!ssg_one($db, 'SELECT id FROM users WHERE id = ?', [(int) $currentUser['id']])) {
+        unset($_SESSION['user']);
+        session_regenerate_id(true);
+        $currentUser = null;
+    }
+}
 $adminExists = false;
 $settings = ['is_open' => 0, 'results_published' => 0];
 $positions = [];
@@ -486,7 +524,12 @@ if ($db instanceof PDO) {
     if ($currentUser && $currentUser['role'] === 'admin') {
         $studentAccounts = ssg_all(
             $db,
-            "SELECT username, display_name, created_at FROM users WHERE role = 'student' ORDER BY display_name"
+            "SELECT u.id, u.username, u.display_name,
+                    CASE WHEN vp.voter_id IS NULL THEN 0 ELSE 1 END AS has_voted
+             FROM users u
+             LEFT JOIN voter_participation vp ON vp.voter_id = u.id
+             WHERE u.role = 'student'
+             ORDER BY u.display_name, u.id"
         );
         $studentCount = count($studentAccounts);
         $turnoutPercent = $studentCount > 0 ? ($ballotCount / $studentCount) * 100 : 0;
@@ -722,9 +765,22 @@ $steps = [
                         <?php if ($studentAccounts): ?>
                             <ul class="account-list">
                                 <?php foreach ($studentAccounts as $account): ?>
-                                    <li><span><strong><?= h($account['display_name']) ?></strong><small><?= h($account['username']) ?></small></span></li>
+                                    <li>
+                                        <span><strong><?= h($account['display_name']) ?></strong><small><?= h($account['username']) ?></small></span>
+                                        <?php if ((int) $account['has_voted'] === 0): ?>
+                                            <form method="post" class="account-delete-form" data-confirm-delete="Delete this student account? This cannot be undone.">
+                                                <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                                                <input type="hidden" name="action" value="admin_delete_student">
+                                                <input type="hidden" name="student_id" value="<?= (int) $account['id'] ?>">
+                                                <button class="button button-danger" type="submit" aria-label="Delete <?= h($account['display_name']) ?> account">Delete</button>
+                                            </form>
+                                        <?php else: ?>
+                                            <span class="account-status">Ballot submitted · protected</span>
+                                        <?php endif; ?>
+                                    </li>
                                 <?php endforeach; ?>
                             </ul>
+                            <p class="help-text">Students who have submitted a ballot cannot be deleted, to preserve election records.</p>
                         <?php else: ?>
                             <p class="help-text">Student accounts will appear here after you add them.</p>
                         <?php endif; ?>
