@@ -61,6 +61,13 @@ function require_valid_password(string $password): void
     }
 }
 
+function require_valid_student_password(string $password): void
+{
+    if ($password === '' || strlen($password) > 72) {
+        throw new RuntimeException('Student passwords must be between 1 and 72 characters.');
+    }
+}
+
 function has_ballots(PDO $db): bool
 {
     return (int) ssg_one($db, 'SELECT COUNT(*) AS total FROM ballots')['total'] > 0;
@@ -231,7 +238,7 @@ if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
             $username = strtolower(form_value('username'));
             $displayName = form_value('display_name');
             $password = form_secret('password');
-            require_valid_password($password);
+            require_valid_student_password($password);
             if (!preg_match('/\A[a-z0-9._-]{3,32}\z/', $username) || $displayName === '' || strlen($displayName) > 100) {
                 throw new RuntimeException('Enter a valid student name and username.');
             }
@@ -248,7 +255,7 @@ if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($action === 'admin_reset_student_password') {
             $studentIdText = form_value('student_id');
             $password = form_secret('password');
-            require_valid_password($password);
+            require_valid_student_password($password);
             if (!ctype_digit($studentIdText)) {
                 throw new RuntimeException('Choose a valid student account.');
             }
@@ -777,7 +784,7 @@ $steps = [
                             <input type="hidden" name="action" value="admin_add_student">
                             <label>Student name<input name="display_name" maxlength="100" required></label>
                             <label>Username<input name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" required></label>
-                            <label class="form-wide">Student password <span class="label-hint">(10–72 characters)</span><input type="password" name="password" minlength="10" maxlength="72" required></label>
+                            <label class="form-wide">Student password <span class="label-hint">(any password, up to 72 characters)</span><input type="password" name="password" maxlength="72" required></label>
                             <button class="button button-primary form-wide" type="submit">Add student</button>
                         </form>
                         <h4>Student accounts <span class="count-badge"><?= count($studentAccounts) ?></span></h4>
@@ -793,7 +800,7 @@ $steps = [
                                                     <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
                                                     <input type="hidden" name="action" value="admin_reset_student_password">
                                                     <input type="hidden" name="student_id" value="<?= (int) $account['id'] ?>">
-                                                    <label>Temporary password <span class="label-hint">(10–72 characters)</span><input type="password" name="password" minlength="10" maxlength="72" autocomplete="new-password" required></label>
+                                                    <label>Temporary password <span class="label-hint">(any password, up to 72 characters)</span><input type="password" name="password" maxlength="72" autocomplete="new-password" required></label>
                                                     <button class="button button-secondary" type="submit">Set password</button>
                                                 </form>
                                             </details>
