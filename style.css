@@ -547,6 +547,12 @@ button { font: inherit; }
 .account-delete-form { margin: 0; }
 .account-delete-form .button { min-height: 34px; padding: 7px 10px; }
 .account-status { color: var(--muted); font-size: 11px; font-weight: 700; }
+.student-list-tools { display: grid; grid-template-columns: minmax(0, 1fr) minmax(150px, .42fr); gap: 12px; margin: 15px 0 7px; }
+.student-list-tools label { display: flex; min-width: 0; flex-direction: column; gap: 6px; color: var(--navy); font-size: 11px; font-weight: 700; }
+.student-list-tools input, .student-list-tools select { width: 100%; min-height: 41px; border: 1px solid #dce6f0; border-radius: 8px; background: white; color: var(--ink); padding: 9px 11px; font: inherit; font-size: 12px; }
+.student-list-tools input:focus, .student-list-tools select:focus { border-color: var(--blue); outline: 3px solid rgb(18 105 180 / 13%); }
+.student-list-summary { margin: 5px 0 10px; color: var(--muted); font-size: 11px; }
+.account-list [hidden] { display: none; }
 .candidate-list li { align-items: flex-start; flex-direction: column; gap: 0; }
 .candidate-list p { margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .management-list li { gap: 10px; }
@@ -562,6 +568,17 @@ button { font: inherit; }
 .button-danger { border-color: #f0d1ce; background: #fff5f4; color: #a23c34; }
 .button-danger:hover { background: #ffe8e5; }
 .results-card { margin-top: 18px; }
+.archive-card { border-color: #dce9f5; background: linear-gradient(145deg, #fff 0%, #f7fbff 100%); }
+.archive-card > h3 { display: flex; align-items: center; gap: 9px; }
+.archive-list { display: grid; gap: 10px; margin-top: 17px; }
+.archive-item { border: 1px solid #e1eaf3; border-radius: 11px; background: white; padding: 13px 15px; }
+.archive-item > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; list-style: none; }
+.archive-item > summary::-webkit-details-marker { display: none; }
+.archive-item > summary::after { content: '+'; color: var(--blue); font-size: 20px; font-weight: 700; }
+.archive-item[open] > summary::after { content: '-'; }
+.archive-item > summary strong { display: block; color: var(--navy); font-size: 13px; }
+.archive-item > summary small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
+.archive-ballots { color: var(--blue); font-size: 11px; font-weight: 800; }
 .result-position { margin-top: 20px; }
 .result-position h4 { margin: 0 0 9px; padding-bottom: 8px; border-bottom: 1px solid #e9eff5; }
 .result-list { display: grid; gap: 7px; }
@@ -597,6 +614,7 @@ button { font: inherit; }
     .election-setup-card { grid-column: auto; }
     .portal-heading { align-items: flex-start; flex-direction: column; gap: 12px; }
     .form-grid { grid-template-columns: 1fr; }
+    .student-list-tools { grid-template-columns: 1fr; }
     .form-wide { grid-column: auto; }
     .portal-heading h2, .portal-card h2 { font-size: 26px; }
     .result-row { align-items: flex-start; }

@@ -53,9 +53,9 @@ Use a database region close to your voters. Local XAMPP/MySQL is not reachable f
 ## Notes
 
 - Student accounts are created by the administrator; there are no shared default credentials. Student passwords can be simple (for example, `David`) and must be 1–72 characters.
-- Administrators can change a student's username; usernames must be 3–32 letters, numbers, dots, dashes, or underscores and must be unique.
+- Administrators can change a student's username; usernames preserve uppercase and are unique regardless of letter case.
 - Administrators can reset student passwords; temporary passwords should be shared privately.
 - Administrators can delete student accounts that have not voted. Accounts with submitted ballots are protected to preserve election records.
 - Voter participation is stored separately from anonymous ballot choices; candidate totals do not expose which student selected whom.
-- This version manages one election per database. Submitted ballots and published results remain stored in PostgreSQL.
+- Only one election is active at a time. After publishing results, administrators can archive the tally and start a fresh election; student accounts stay, while the active candidates and ballots are cleared. Previous tallies remain available to administrators as read-only history.
 - This prototype does not connect to a school's existing identity provider. Use HTTPS and a properly secured PostgreSQL account before deploying beyond local testing.

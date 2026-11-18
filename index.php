@@ -73,6 +73,20 @@ function has_ballots(PDO $db): bool
     return (int) ssg_one($db, 'SELECT COUNT(*) AS total FROM ballots')['total'] > 0;
 }
 
+function election_results(PDO $db): array
+{
+    return ssg_all(
+        $db,
+        'SELECT p.id AS position_id, p.name AS position_name, c.id AS candidate_id, c.name AS candidate_name,
+                c.statement, COUNT(b.candidate_id) AS votes
+         FROM positions p
+         JOIN candidates c ON c.position_id = p.id
+         LEFT JOIN ballots b ON b.candidate_id = c.id
+         GROUP BY p.id, p.name, c.id, c.name, c.statement
+         ORDER BY p.id, votes DESC, c.name'
+    );
+}
+
 if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
     try {
         if (!hash_equals((string) ($_SESSION['csrf_token'] ?? ''), form_value('csrf_token'))) {
@@ -133,11 +147,11 @@ if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($action === 'login') {
-            $username = strtolower(form_value('username'));
+            $username = form_value('username');
             $password = form_secret('password');
             $user = ssg_one(
                 $db,
-                'SELECT id, username, display_name, password_hash, role FROM users WHERE username = ?',
+                'SELECT id, username, display_name, password_hash, role FROM users WHERE LOWER(username) = LOWER(?)',
                 [$username]
             );
             if (!$user || !password_verify($password, $user['password_hash'])) {
@@ -235,11 +249,11 @@ if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($action === 'admin_add_student') {
-            $username = strtolower(form_value('username'));
+            $username = form_value('username');
             $displayName = form_value('display_name');
             $password = form_secret('password');
             require_valid_student_password($password);
-            if (!preg_match('/\A[a-z0-9._-]{3,32}\z/', $username) || $displayName === '' || strlen($displayName) > 100) {
+            if (!preg_match('/\A[A-Za-z0-9._-]{3,32}\z/', $username) || $displayName === '' || strlen($displayName) > 100) {
                 throw new RuntimeException('Enter a valid student name and username.');
             }
             $hash = password_hash($password, PASSWORD_DEFAULT);
@@ -254,8 +268,8 @@ if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
 
         if ($action === 'admin_rename_student') {
             $studentIdText = form_value('student_id');
-            $username = strtolower(form_value('username'));
-            if (!ctype_digit($studentIdText) || !preg_match('/\A[a-z0-9._-]{3,32}\z/', $username)) {
+            $username = form_value('username');
+            if (!ctype_digit($studentIdText) || !preg_match('/\A[A-Za-z0-9._-]{3,32}\z/', $username)) {
                 throw new RuntimeException('Enter a valid username (3–32 letters, numbers, dots, dashes, or underscores).');
             }
 
@@ -493,12 +507,60 @@ if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
             app_redirect('Results are now available to students.');
         }
 
+        if ($action === 'admin_start_new_election') {
+            $db->beginTransaction();
+            try {
+                $settings = ssg_one($db, 'SELECT is_open, results_published FROM election_settings WHERE id = 1 FOR UPDATE');
+                if (!$settings || (int) $settings['is_open'] === 1) {
+                    throw new RuntimeException('Close voting before starting a new election.');
+                }
+                if ((int) $settings['results_published'] !== 1) {
+                    throw new RuntimeException('Publish the final results before starting a new election.');
+                }
+
+                $results = election_results($db);
+                $studentCount = (int) ssg_one($db, "SELECT COUNT(*) AS total FROM users WHERE role = 'student'")['total'];
+                $ballotCount = (int) ssg_one($db, 'SELECT COUNT(*) AS total FROM voter_participation')['total'];
+                try {
+                    $resultsJson = json_encode(
+                        $results,
+                        JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_THROW_ON_ERROR
+                    );
+                } catch (JsonException $exception) {
+                    throw new RuntimeException('Unable to archive the election results. Please try again.', 0, $exception);
+                }
+
+                ssg_execute(
+                    $db,
+                    'INSERT INTO election_archives (student_count, ballot_count, results) VALUES (?, ?, CAST(? AS JSONB))',
+                    [$studentCount, $ballotCount, $resultsJson]
+                );
+                $db->exec('DELETE FROM ballots');
+                $db->exec('DELETE FROM voter_participation');
+                $db->exec('DELETE FROM candidates');
+                $db->exec('DELETE FROM positions');
+                $db->exec('UPDATE election_settings SET is_open = 0, results_published = 0, updated_at = CURRENT_TIMESTAMP WHERE id = 1');
+                $db->commit();
+            } catch (Throwable $exception) {
+                if ($db->inTransaction()) {
+                    $db->rollBack();
+                }
+                throw $exception;
+            }
+            app_redirect('Previous results archived. The new election is ready for positions and candidates.');
+        }
+
         throw new RuntimeException('That action is not available.');
     } catch (PDOException $exception) {
         error_log('SSG Voting database operation failed: ' . $exception->getMessage());
-        $message = $exception->getCode() === '23505'
-            ? 'That username, position, or ballot already exists.'
-            : 'The request could not be saved. Check the form and try again.';
+        if ($exception->getCode() === '23505'
+            && in_array($action ?? '', ['admin_add_student', 'admin_rename_student'], true)) {
+            $message = 'That username is already in use.';
+        } elseif ($exception->getCode() === '23505') {
+            $message = 'That position or ballot already exists.';
+        } else {
+            $message = 'The request could not be saved. Check the form and try again.';
+        }
         app_redirect($message, 'error');
     } catch (RuntimeException $exception) {
         app_redirect($exception->getMessage(), 'error');
@@ -525,6 +587,7 @@ $positions = [];
 $candidateRows = [];
 $results = [];
 $studentAccounts = [];
+$archivedElections = [];
 $alreadyVoted = false;
 $ballotCount = 0;
 $studentCount = 0;
@@ -544,16 +607,7 @@ if ($db instanceof PDO) {
     $ballotCount = (int) ssg_one($db, 'SELECT COUNT(*) AS total FROM voter_participation')['total'];
 
     if ((int) $settings['results_published'] === 1) {
-        $results = ssg_all(
-            $db,
-            'SELECT p.id AS position_id, p.name AS position_name, c.id AS candidate_id, c.name AS candidate_name,
-                    c.statement, COUNT(b.candidate_id) AS votes
-             FROM positions p
-             JOIN candidates c ON c.position_id = p.id
-             LEFT JOIN ballots b ON b.candidate_id = c.id
-             GROUP BY p.id, p.name, c.id, c.name, c.statement
-             ORDER BY p.id, votes DESC, c.name'
-        );
+        $results = election_results($db);
     }
 
     if ($currentUser && $currentUser['role'] === 'student') {
@@ -574,6 +628,11 @@ if ($db instanceof PDO) {
              LEFT JOIN voter_participation vp ON vp.voter_id = u.id
              WHERE u.role = 'student'
              ORDER BY u.display_name, u.id"
+        );
+        $archivedElections = ssg_all(
+            $db,
+            'SELECT id, archived_at, student_count, ballot_count, results::TEXT AS results
+             FROM election_archives ORDER BY id DESC'
         );
         $studentCount = count($studentAccounts);
         $turnoutPercent = $studentCount > 0 ? ($ballotCount / $studentCount) * 100 : 0;
@@ -767,6 +826,12 @@ $steps = [
                         <p><?= number_format($ballotCount) ?> student<?= $ballotCount === 1 ? ' has' : 's have' ?> submitted a ballot.</p>
                         <?php if ((int) $settings['results_published'] === 1): ?>
                             <p class="status-note">Results are published and visible to students.</p>
+                            <p class="help-text">Ready to run another election? The final results will be saved in the archive, student accounts will be kept, and current candidates and ballots will be cleared.</p>
+                            <form method="post" class="stack-form publish-form" data-confirm-new-election>
+                                <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                                <input type="hidden" name="action" value="admin_start_new_election">
+                                <button class="button button-danger" type="submit">Archive results &amp; start a new election</button>
+                            </form>
                         <?php elseif ((int) $settings['is_open'] === 1): ?>
                             <form method="post" class="stack-form">
                                 <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
@@ -801,15 +866,24 @@ $steps = [
                             <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
                             <input type="hidden" name="action" value="admin_add_student">
                             <label>Student name<input name="display_name" maxlength="100" required></label>
-                            <label>Username<input name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" required></label>
+                            <label>Username <span class="label-hint">Uppercase is preserved; sign-in ignores case.</span><input name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" required></label>
                             <label class="form-wide">Student password <span class="label-hint">(any password, up to 72 characters)</span><input type="password" name="password" maxlength="72" required></label>
                             <button class="button button-primary form-wide" type="submit">Add student</button>
                         </form>
                         <h4>Student accounts <span class="count-badge"><?= count($studentAccounts) ?></span></h4>
                         <?php if ($studentAccounts): ?>
-                            <ul class="account-list">
+                            <div class="student-list-tools">
+                                <label>Search students<input type="search" data-student-search placeholder="Name or username"></label>
+                                <label>Voting status<select data-student-filter>
+                                    <option value="all">All students</option>
+                                    <option value="not-voted">Not voted</option>
+                                    <option value="voted">Voted</option>
+                                </select></label>
+                            </div>
+                            <p class="student-list-summary" data-student-count aria-live="polite"></p>
+                            <ul class="account-list" data-student-list>
                                 <?php foreach ($studentAccounts as $account): ?>
-                                    <li>
+                                    <li data-student-row data-student-search="<?= h($account['display_name'] . ' ' . $account['username']) ?>" data-student-voted="<?= (int) $account['has_voted'] ?>">
                                         <span><strong><?= h($account['display_name']) ?></strong><small><?= h($account['username']) ?></small></span>
                                         <div class="account-actions">
                                             <details class="management-details">
@@ -818,7 +892,7 @@ $steps = [
                                                     <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
                                                     <input type="hidden" name="action" value="admin_rename_student">
                                                     <input type="hidden" name="student_id" value="<?= (int) $account['id'] ?>">
-                                                    <label>New username<input name="username" value="<?= h($account['username']) ?>" minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" autocomplete="username" required></label>
+                                                    <label>New username <span class="label-hint">Uppercase is preserved.</span><input name="username" value="<?= h($account['username']) ?>" minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" autocomplete="username" required></label>
                                                     <button class="button button-secondary" type="submit">Save username</button>
                                                 </form>
                                             </details>
@@ -975,6 +1049,57 @@ $steps = [
                                 </div>
                             </div>
                         <?php endforeach; ?>
+                    </section>
+                <?php endif; ?>
+                <?php if ($archivedElections): ?>
+                    <section class="portal-card results-card archive-card">
+                        <p class="eyebrow section-eyebrow">Election history</p>
+                        <h3>Archived results <span class="count-badge"><?= count($archivedElections) ?></span></h3>
+                        <p class="help-text">Past results are read-only and do not include individual voter choices.</p>
+                        <div class="archive-list">
+                            <?php foreach ($archivedElections as $archive): ?>
+                                <?php
+                                $archiveResults = json_decode((string) $archive['results'], true);
+                                $archivePositions = [];
+                                if (is_array($archiveResults)) {
+                                    foreach ($archiveResults as $archiveResult) {
+                                        $positionId = (int) $archiveResult['position_id'];
+                                        if (!isset($archivePositions[$positionId])) {
+                                            $archivePositions[$positionId] = [
+                                                'name' => (string) $archiveResult['position_name'],
+                                                'candidates' => [],
+                                            ];
+                                        }
+                                        $archivePositions[$positionId]['candidates'][] = $archiveResult;
+                                    }
+                                }
+                                ?>
+                                <details class="archive-item">
+                                    <summary>
+                                        <span><strong>Election #<?= (int) $archive['id'] ?></strong><small><?= h((string) $archive['archived_at']) ?></small></span>
+                                        <span class="archive-ballots"><?= number_format((int) $archive['ballot_count']) ?> ballots</span>
+                                    </summary>
+                                    <?php if (is_array($archiveResults)): ?>
+                                        <p class="help-text"><?= number_format((int) $archive['ballot_count']) ?> ballots from <?= number_format((int) $archive['student_count']) ?> student accounts.</p>
+                                        <?php foreach ($archivePositions as $archivePosition): ?>
+                                            <div class="result-position">
+                                                <h4><?= h($archivePosition['name']) ?></h4>
+                                                <div class="result-list">
+                                                    <?php foreach ($archivePosition['candidates'] as $archiveCandidate): ?>
+                                                        <div class="result-row">
+                                                            <span><strong><?= h((string) $archiveCandidate['candidate_name']) ?></strong><small><?= h((string) $archiveCandidate['statement']) ?></small></span>
+                                                            <span class="vote-total"><?= number_format((int) $archiveCandidate['votes']) ?> <small><?= (int) $archiveCandidate['votes'] === 1 ? 'vote' : 'votes' ?></small></span>
+                                                        </div>
+                                                    <?php endforeach; ?>
+                                                </div>
+                                            </div>
+                                        <?php endforeach; ?>
+                                    <?php else: ?>
+                                        <p class="notice notice-error" role="alert">This archived result could not be displayed.</p>
+                                    <?php endif; ?>
+                                </details>
+                            <?php endforeach; ?>
+                        </div>
                     </section>
                 <?php endif; ?>
             <?php else: ?>
