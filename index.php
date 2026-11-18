@@ -553,10 +553,11 @@ if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
         throw new RuntimeException('That action is not available.');
     } catch (PDOException $exception) {
         error_log('SSG Voting database operation failed: ' . $exception->getMessage());
-        if ($exception->getCode() === '23505'
+        $isUniqueViolation = ($exception->errorInfo[0] ?? null) === '23505';
+        if ($isUniqueViolation
             && in_array($action ?? '', ['admin_add_student', 'admin_rename_student'], true)) {
             $message = 'That username is already in use.';
-        } elseif ($exception->getCode() === '23505') {
+        } elseif ($isUniqueViolation) {
             $message = 'That position or ballot already exists.';
         } else {
             $message = 'The request could not be saved. Check the form and try again.';
@@ -881,45 +882,47 @@ $steps = [
                                 </select></label>
                             </div>
                             <p class="student-list-summary" data-student-count aria-live="polite"></p>
-                            <ul class="account-list" data-student-list>
-                                <?php foreach ($studentAccounts as $account): ?>
-                                    <li data-student-row data-student-search="<?= h($account['display_name'] . ' ' . $account['username']) ?>" data-student-voted="<?= (int) $account['has_voted'] ?>">
-                                        <span><strong><?= h($account['display_name']) ?></strong><small><?= h($account['username']) ?></small></span>
-                                        <div class="account-actions">
-                                            <details class="management-details">
-                                                <summary>Change username</summary>
-                                                <form method="post" class="stack-form">
-                                                    <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
-                                                    <input type="hidden" name="action" value="admin_rename_student">
-                                                    <input type="hidden" name="student_id" value="<?= (int) $account['id'] ?>">
-                                                    <label>New username <span class="label-hint">Uppercase is preserved.</span><input name="username" value="<?= h($account['username']) ?>" minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" autocomplete="username" required></label>
-                                                    <button class="button button-secondary" type="submit">Save username</button>
-                                                </form>
-                                            </details>
-                                            <details class="management-details">
-                                                <summary>Reset password</summary>
-                                                <form method="post" class="stack-form">
-                                                    <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
-                                                    <input type="hidden" name="action" value="admin_reset_student_password">
-                                                    <input type="hidden" name="student_id" value="<?= (int) $account['id'] ?>">
-                                                    <label>Temporary password <span class="label-hint">(any password, up to 72 characters)</span><input type="password" name="password" maxlength="72" autocomplete="new-password" required></label>
-                                                    <button class="button button-secondary" type="submit">Set password</button>
-                                                </form>
-                                            </details>
-                                            <?php if ((int) $account['has_voted'] === 0): ?>
-                                                <form method="post" class="account-delete-form" data-confirm-delete="Delete this student account? This cannot be undone.">
-                                                    <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
-                                                    <input type="hidden" name="action" value="admin_delete_student">
-                                                    <input type="hidden" name="student_id" value="<?= (int) $account['id'] ?>">
-                                                    <button class="button button-danger" type="submit" aria-label="Delete <?= h($account['display_name']) ?> account">Delete</button>
-                                                </form>
-                                            <?php else: ?>
-                                                <span class="account-status">Ballot submitted · protected</span>
-                                            <?php endif; ?>
-                                        </div>
-                                    </li>
-                                <?php endforeach; ?>
-                            </ul>
+                            <div class="student-list-scroll" role="region" aria-label="Student account list" tabindex="0">
+                                <ul class="account-list" data-student-list>
+                                    <?php foreach ($studentAccounts as $account): ?>
+                                        <li data-student-row data-student-search="<?= h($account['display_name'] . ' ' . $account['username']) ?>" data-student-voted="<?= (int) $account['has_voted'] ?>">
+                                            <span><strong><?= h($account['display_name']) ?></strong><small><?= h($account['username']) ?></small></span>
+                                            <div class="account-actions">
+                                                <details class="management-details">
+                                                    <summary>Change username</summary>
+                                                    <form method="post" class="stack-form">
+                                                        <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                                                        <input type="hidden" name="action" value="admin_rename_student">
+                                                        <input type="hidden" name="student_id" value="<?= (int) $account['id'] ?>">
+                                                        <label>New username <span class="label-hint">Uppercase is preserved.</span><input name="username" value="<?= h($account['username']) ?>" minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" autocomplete="username" required></label>
+                                                        <button class="button button-secondary" type="submit">Save username</button>
+                                                    </form>
+                                                </details>
+                                                <details class="management-details">
+                                                    <summary>Reset password</summary>
+                                                    <form method="post" class="stack-form">
+                                                        <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                                                        <input type="hidden" name="action" value="admin_reset_student_password">
+                                                        <input type="hidden" name="student_id" value="<?= (int) $account['id'] ?>">
+                                                        <label>Temporary password <span class="label-hint">(any password, up to 72 characters)</span><input type="password" name="password" maxlength="72" autocomplete="new-password" required></label>
+                                                        <button class="button button-secondary" type="submit">Set password</button>
+                                                    </form>
+                                                </details>
+                                                <?php if ((int) $account['has_voted'] === 0): ?>
+                                                    <form method="post" class="account-delete-form" data-confirm-delete="Delete this student account? This cannot be undone.">
+                                                        <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                                                        <input type="hidden" name="action" value="admin_delete_student">
+                                                        <input type="hidden" name="student_id" value="<?= (int) $account['id'] ?>">
+                                                        <button class="button button-danger" type="submit" aria-label="Delete <?= h($account['display_name']) ?> account">Delete</button>
+                                                    </form>
+                                                <?php else: ?>
+                                                    <span class="account-status">Ballot submitted · protected</span>
+                                                <?php endif; ?>
+                                            </div>
+                                        </li>
+                                    <?php endforeach; ?>
+                                </ul>
+                            </div>
                             <p class="help-text">Students who have submitted a ballot cannot be deleted, to preserve election records.</p>
                             <p class="help-text">Reset passwords only when needed, and share temporary passwords privately.</p>
                         <?php else: ?>
