@@ -252,6 +252,24 @@ if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
             app_redirect('Student account created. Share the username and password securely with the student.');
         }
 
+        if ($action === 'admin_rename_student') {
+            $studentIdText = form_value('student_id');
+            $username = strtolower(form_value('username'));
+            if (!ctype_digit($studentIdText) || !preg_match('/\A[a-z0-9._-]{3,32}\z/', $username)) {
+                throw new RuntimeException('Enter a valid username (3–32 letters, numbers, dots, dashes, or underscores).');
+            }
+
+            $statement = ssg_execute(
+                $db,
+                "UPDATE users SET username = ? WHERE id = ? AND role = 'student'",
+                [$username, (int) $studentIdText]
+            );
+            if ($statement->rowCount() === 0) {
+                throw new RuntimeException('That student account no longer exists.');
+            }
+            app_redirect('Student username updated.');
+        }
+
         if ($action === 'admin_reset_student_password') {
             $studentIdText = form_value('student_id');
             $password = form_secret('password');
@@ -794,6 +812,16 @@ $steps = [
                                     <li>
                                         <span><strong><?= h($account['display_name']) ?></strong><small><?= h($account['username']) ?></small></span>
                                         <div class="account-actions">
+                                            <details class="management-details">
+                                                <summary>Change username</summary>
+                                                <form method="post" class="stack-form">
+                                                    <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                                                    <input type="hidden" name="action" value="admin_rename_student">
+                                                    <input type="hidden" name="student_id" value="<?= (int) $account['id'] ?>">
+                                                    <label>New username<input name="username" value="<?= h($account['username']) ?>" minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" autocomplete="username" required></label>
+                                                    <button class="button button-secondary" type="submit">Save username</button>
+                                                </form>
+                                            </details>
                                             <details class="management-details">
                                                 <summary>Reset password</summary>
                                                 <form method="post" class="stack-form">
