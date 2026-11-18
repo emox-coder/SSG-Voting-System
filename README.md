@@ -53,6 +53,7 @@ Use a database region close to your voters. Local XAMPP/MySQL is not reachable f
 ## Notes
 
 - Student accounts are created by the administrator; there are no shared default credentials.
+- Administrators can reset student passwords; temporary passwords should be shared privately.
 - Administrators can delete student accounts that have not voted. Accounts with submitted ballots are protected to preserve election records.
 - Voter participation is stored separately from anonymous ballot choices; candidate totals do not expose which student selected whom.
 - This version manages one election per database. Submitted ballots and published results remain stored in PostgreSQL.

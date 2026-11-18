@@ -245,6 +245,25 @@ if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
             app_redirect('Student account created. Share the username and password securely with the student.');
         }
 
+        if ($action === 'admin_reset_student_password') {
+            $studentIdText = form_value('student_id');
+            $password = form_secret('password');
+            require_valid_password($password);
+            if (!ctype_digit($studentIdText)) {
+                throw new RuntimeException('Choose a valid student account.');
+            }
+
+            $statement = ssg_execute(
+                $db,
+                "UPDATE users SET password_hash = ? WHERE id = ? AND role = 'student'",
+                [password_hash($password, PASSWORD_DEFAULT), (int) $studentIdText]
+            );
+            if ($statement->rowCount() === 0) {
+                throw new RuntimeException('That student account no longer exists.');
+            }
+            app_redirect('Student password reset. Share the temporary password securely with the student.');
+        }
+
         if ($action === 'admin_delete_student') {
             $studentIdText = form_value('student_id');
             if (!ctype_digit($studentIdText)) {
@@ -767,20 +786,33 @@ $steps = [
                                 <?php foreach ($studentAccounts as $account): ?>
                                     <li>
                                         <span><strong><?= h($account['display_name']) ?></strong><small><?= h($account['username']) ?></small></span>
-                                        <?php if ((int) $account['has_voted'] === 0): ?>
-                                            <form method="post" class="account-delete-form" data-confirm-delete="Delete this student account? This cannot be undone.">
-                                                <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
-                                                <input type="hidden" name="action" value="admin_delete_student">
-                                                <input type="hidden" name="student_id" value="<?= (int) $account['id'] ?>">
-                                                <button class="button button-danger" type="submit" aria-label="Delete <?= h($account['display_name']) ?> account">Delete</button>
-                                            </form>
-                                        <?php else: ?>
-                                            <span class="account-status">Ballot submitted · protected</span>
-                                        <?php endif; ?>
+                                        <div class="account-actions">
+                                            <details class="management-details">
+                                                <summary>Reset password</summary>
+                                                <form method="post" class="stack-form">
+                                                    <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                                                    <input type="hidden" name="action" value="admin_reset_student_password">
+                                                    <input type="hidden" name="student_id" value="<?= (int) $account['id'] ?>">
+                                                    <label>Temporary password <span class="label-hint">(10–72 characters)</span><input type="password" name="password" minlength="10" maxlength="72" autocomplete="new-password" required></label>
+                                                    <button class="button button-secondary" type="submit">Set password</button>
+                                                </form>
+                                            </details>
+                                            <?php if ((int) $account['has_voted'] === 0): ?>
+                                                <form method="post" class="account-delete-form" data-confirm-delete="Delete this student account? This cannot be undone.">
+                                                    <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                                                    <input type="hidden" name="action" value="admin_delete_student">
+                                                    <input type="hidden" name="student_id" value="<?= (int) $account['id'] ?>">
+                                                    <button class="button button-danger" type="submit" aria-label="Delete <?= h($account['display_name']) ?> account">Delete</button>
+                                                </form>
+                                            <?php else: ?>
+                                                <span class="account-status">Ballot submitted · protected</span>
+                                            <?php endif; ?>
+                                        </div>
                                     </li>
                                 <?php endforeach; ?>
                             </ul>
                             <p class="help-text">Students who have submitted a ballot cannot be deleted, to preserve election records.</p>
+                            <p class="help-text">Reset passwords only when needed, and share temporary passwords privately.</p>
                         <?php else: ?>
                             <p class="help-text">Student accounts will appear here after you add them.</p>
                         <?php endif; ?>
