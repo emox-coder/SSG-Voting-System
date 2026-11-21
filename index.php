@@ -538,7 +538,6 @@ if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 $db->exec('DELETE FROM ballots');
                 $db->exec('DELETE FROM voter_participation');
                 $db->exec('DELETE FROM candidates');
-                $db->exec('DELETE FROM positions');
                 $db->exec('UPDATE election_settings SET is_open = 0, results_published = 0, updated_at = CURRENT_TIMESTAMP WHERE id = 1');
                 $db->commit();
             } catch (Throwable $exception) {
@@ -547,7 +546,7 @@ if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 throw $exception;
             }
-            app_redirect('Previous results archived. The new election is ready for positions and candidates.');
+            app_redirect('Previous results archived. Your positions are still available; add new candidates to start the next election.');
         }
 
         throw new RuntimeException('That action is not available.');
@@ -827,7 +826,7 @@ $steps = [
                         <p><?= number_format($ballotCount) ?> student<?= $ballotCount === 1 ? ' has' : 's have' ?> submitted a ballot.</p>
                         <?php if ((int) $settings['results_published'] === 1): ?>
                             <p class="status-note">Results are published and visible to students.</p>
-                            <p class="help-text">Ready to run another election? The final results will be saved in the archive, student accounts will be kept, and current candidates and ballots will be cleared.</p>
+                            <p class="help-text">Ready to run another election? Final results will be archived, student accounts and positions will be kept, and current candidates and ballots will be cleared. You can remove positions individually below.</p>
                             <form method="post" class="stack-form publish-form" data-confirm-new-election>
                                 <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
                                 <input type="hidden" name="action" value="admin_start_new_election">

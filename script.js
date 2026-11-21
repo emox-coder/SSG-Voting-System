@@ -34,7 +34,7 @@ document.querySelectorAll('[data-confirm-publish]').forEach((form) => {
 
 document.querySelectorAll('[data-confirm-new-election]').forEach((form) => {
     form.addEventListener('submit', (event) => {
-        const message = 'Start a new election? The published results will be archived, but current candidates and ballots will be cleared. Student accounts will be kept.';
+        const message = 'Start a new election? The published results will be archived, current candidates and ballots will be cleared, and student accounts and positions will be kept. You can remove positions individually afterward.';
         if (!window.confirm(message)) {
             event.preventDefault();
         }
