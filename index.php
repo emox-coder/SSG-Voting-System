@@ -713,7 +713,7 @@ $steps = [
     <link rel="stylesheet" href="style.css">
     <script src="script.js" defer></script>
 </head>
-<body<?= $currentUser && $currentUser['role'] === 'admin' ? ' class="admin-session"' : '' ?>>
+<body>
     <header class="site-header">
         <a class="brand" href="#top" aria-label="SSG Vote home">
             <span class="brand-mark" aria-hidden="true">S</span>
@@ -724,8 +724,11 @@ $steps = [
             <span class="visually-hidden">Toggle navigation</span>
         </button>
         <nav class="site-nav" id="site-nav" aria-label="Main navigation">
-            <a href="#portal"><?= $currentUser ? 'Dashboard' : 'Sign in' ?></a>
-            <?php if ($currentUser && $currentUser['role'] === 'admin'): ?>
+            <?php if (!$currentUser): ?>
+                <a href="#portal">Sign in</a>
+                <a href="#how-it-works">How it works</a>
+            <?php elseif ($currentUser['role'] === 'admin'): ?>
+                <a href="#portal">Dashboard</a>
                 <a href="#election-controls">Election</a>
                 <a href="#student-access">Students</a>
                 <a href="#election-setup">Rosters</a>
@@ -733,7 +736,11 @@ $steps = [
                     <a href="#election-history">Archives</a>
                 <?php endif; ?>
             <?php else: ?>
+                <a href="#portal">Dashboard</a>
                 <a href="#how-it-works">How it works</a>
+                <?php if ((int) $settings['results_published'] === 1): ?>
+                    <a href="#student-results">Results</a>
+                <?php endif; ?>
             <?php endif; ?>
             <?php if ($currentUser): ?>
                 <form method="post" class="nav-logout">
@@ -748,7 +755,6 @@ $steps = [
     </header>
 
     <main id="top">
-        <?php if (!$currentUser || $currentUser['role'] !== 'admin'): ?>
         <section class="hero" aria-labelledby="page-title">
             <div class="hero-copy">
                 <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> A better way to elect</p>
@@ -821,7 +827,6 @@ $steps = [
                     <div>
                         <p class="eyebrow section-eyebrow">Administrator dashboard</p>
                         <h2>Welcome, <?= h((string) $currentUser['display_name']) ?></h2>
-                        <p class="dashboard-subtitle">Manage voting, students, candidates, and published results.</p>
                     </div>
                     <span class="status-pill <?= (int) $settings['is_open'] === 1 ? 'status-open' : 'status-closed' ?>">
                         <?= (int) $settings['is_open'] === 1 ? 'Voting is open' : 'Voting is closed' ?>
@@ -850,7 +855,7 @@ $steps = [
                     </article>
                 </div>
                 <div class="admin-grid">
-                    <section class="portal-card election-card" id="election-controls">
+                    <section class="portal-card election-card">
                         <p class="eyebrow section-eyebrow">Election controls</p>
                         <h3>Voting status</h3>
                         <p><?= number_format($ballotCount) ?> student<?= $ballotCount === 1 ? ' has' : 's have' ?> submitted a ballot.</p>
@@ -889,7 +894,7 @@ $steps = [
                         <p class="help-text">Voting can open after every position has at least two candidates. Once the first ballot is submitted, candidates are locked. Close voting before publishing results.</p>
                     </section>
 
-                    <section class="portal-card" id="student-access">
+                    <section class="portal-card">
                         <p class="eyebrow section-eyebrow">Student access</p>
                         <h3>Create a student account</h3>
                         <form method="post" class="form-grid compact-form">
@@ -959,7 +964,7 @@ $steps = [
                         <?php endif; ?>
                     </section>
 
-                    <section class="portal-card election-setup-card" id="election-setup">
+                    <section class="portal-card election-setup-card">
                         <p class="eyebrow section-eyebrow">Election setup</p>
                         <h3>Positions & candidates</h3>
                         <?php if ((int) $settings['is_open'] === 1 || $ballotCount > 0): ?>
@@ -1063,7 +1068,7 @@ $steps = [
                 </div>
 
                 <?php if ((int) $settings['results_published'] === 1): ?>
-                    <section class="portal-card results-card">
+                    <section class="portal-card results-card" id="student-results">
                         <p class="eyebrow section-eyebrow">Final tally</p>
                         <h3>Published election results</h3>
                         <?php foreach ($positions as $position): ?>
@@ -1084,7 +1089,7 @@ $steps = [
                     </section>
                 <?php endif; ?>
                 <?php if ($archivedElections): ?>
-                    <section class="portal-card results-card archive-card" id="election-history">
+                    <section class="portal-card results-card archive-card">
                         <p class="eyebrow section-eyebrow">Election history</p>
                         <h3>Archived results <span class="count-badge"><?= count($archivedElections) ?></span></h3>
                         <p class="help-text">Past results are read-only and do not include individual voter choices.</p>
@@ -1139,7 +1144,6 @@ $steps = [
                             <?php endforeach; ?>
                         </div>
                     </section>
-                    <?php endif; ?>
                 <?php endif; ?>
             <?php else: ?>
                 <div class="portal-heading">

@@ -81,21 +81,3 @@ if (studentSearch && studentFilter && studentCount) {
     studentFilter.addEventListener('change', filterStudentRows);
     filterStudentRows();
 }
-
-document.querySelectorAll('form').forEach((form) => {
-    form.addEventListener('submit', (event) => {
-        if (event.defaultPrevented) {
-            return;
-        }
-        const submitButton = form.querySelector('[type="submit"]');
-        if (!submitButton || submitButton.disabled) {
-            return;
-        }
-
-        submitButton.disabled = true;
-        submitButton.setAttribute('aria-busy', 'true');
-        submitButton.classList.add('is-loading');
-        submitButton.dataset.originalText = submitButton.textContent.trim();
-        submitButton.textContent = 'Please wait...';
-    });
-});
