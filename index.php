@@ -855,7 +855,7 @@ $steps = [
                     </article>
                 </div>
                 <div class="admin-grid">
-                    <section class="portal-card election-card">
+                    <section class="portal-card election-card" id="election-controls">
                         <p class="eyebrow section-eyebrow">Election controls</p>
                         <h3>Voting status</h3>
                         <p><?= number_format($ballotCount) ?> student<?= $ballotCount === 1 ? ' has' : 's have' ?> submitted a ballot.</p>
@@ -894,7 +894,7 @@ $steps = [
                         <p class="help-text">Voting can open after every position has at least two candidates. Once the first ballot is submitted, candidates are locked. Close voting before publishing results.</p>
                     </section>
 
-                    <section class="portal-card">
+                    <section class="portal-card" id="student-access">
                         <p class="eyebrow section-eyebrow">Student access</p>
                         <h3>Create a student account</h3>
                         <form method="post" class="form-grid compact-form">
@@ -964,7 +964,7 @@ $steps = [
                         <?php endif; ?>
                     </section>
 
-                    <section class="portal-card election-setup-card">
+                    <section class="portal-card election-setup-card" id="election-setup">
                         <p class="eyebrow section-eyebrow">Election setup</p>
                         <h3>Positions & candidates</h3>
                         <?php if ((int) $settings['is_open'] === 1 || $ballotCount > 0): ?>
@@ -1089,7 +1089,7 @@ $steps = [
                     </section>
                 <?php endif; ?>
                 <?php if ($archivedElections): ?>
-                    <section class="portal-card results-card archive-card">
+                    <section class="portal-card results-card archive-card" id="election-history">
                         <p class="eyebrow section-eyebrow">Election history</p>
                         <h3>Archived results <span class="count-badge"><?= count($archivedElections) ?></span></h3>
                         <p class="help-text">Past results are read-only and do not include individual voter choices.</p>
