@@ -58,4 +58,5 @@ Use a database region close to your voters. Local XAMPP/MySQL is not reachable f
 - Administrators can delete student accounts that have not voted. Accounts with submitted ballots are protected to preserve election records.
 - Voter participation is stored separately from anonymous ballot choices; candidate totals do not expose which student selected whom.
 - Only one election is active at a time. After publishing results, administrators can archive the tally and start a fresh election; student accounts and positions stay, while active candidates and ballots are cleared. Positions can be removed individually in election setup. Previous tallies remain available to administrators as read-only history.
+- Administrators can permanently delete an archived election from the Election history section after confirmation.
 - This prototype does not connect to a school's existing identity provider. Use HTTPS and a properly secured PostgreSQL account before deploying beyond local testing.

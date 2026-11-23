@@ -581,6 +581,8 @@ button { font: inherit; }
 .archive-item > summary strong { display: block; color: var(--navy); font-size: 13px; }
 .archive-item > summary small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; }
 .archive-ballots { color: var(--blue); font-size: 11px; font-weight: 800; }
+.archive-delete-form { display: flex; justify-content: flex-end; margin: 18px 0 2px; }
+.archive-delete-form .button { min-height: 36px; padding: 8px 12px; }
 .result-position { margin-top: 20px; }
 .result-position h4 { margin: 0 0 9px; padding-bottom: 8px; border-bottom: 1px solid #e9eff5; }
 .result-list { display: grid; gap: 7px; }

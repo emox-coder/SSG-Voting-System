@@ -549,6 +549,23 @@ if ($db instanceof PDO && $_SERVER['REQUEST_METHOD'] === 'POST') {
             app_redirect('Previous results archived. Your positions are still available; add new candidates to start the next election.');
         }
 
+        if ($action === 'admin_delete_archive') {
+            $archiveIdText = form_value('archive_id');
+            if (!ctype_digit($archiveIdText)) {
+                throw new RuntimeException('Choose a valid archived election to delete.');
+            }
+
+            $statement = ssg_execute(
+                $db,
+                'DELETE FROM election_archives WHERE id = ?',
+                [(int) $archiveIdText]
+            );
+            if ($statement->rowCount() === 0) {
+                throw new RuntimeException('That archived election no longer exists.');
+            }
+            app_redirect('Archived election deleted.');
+        }
+
         throw new RuntimeException('That action is not available.');
     } catch (PDOException $exception) {
         error_log('SSG Voting database operation failed: ' . $exception->getMessage());
@@ -708,7 +725,9 @@ $steps = [
         </button>
         <nav class="site-nav" id="site-nav" aria-label="Main navigation">
             <a href="#portal"><?= $currentUser ? 'Dashboard' : 'Sign in' ?></a>
-            <a href="#how-it-works">How it works</a>
+            <?php if (!$currentUser || $currentUser['role'] !== 'admin'): ?>
+                <a href="#how-it-works">How it works</a>
+            <?php endif; ?>
             <?php if ($currentUser): ?>
                 <form method="post" class="nav-logout">
                     <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
@@ -727,7 +746,9 @@ $steps = [
                 <p class="eyebrow"><span class="eyebrow-dot" aria-hidden="true"></span> A better way to elect</p>
                 <h1 id="page-title">Your voice.<br><span>Your school.</span></h1>
                 <p class="hero-description">A clear, secure, and simple way for every student to take part in choosing their next student leaders.</p>
-                <a class="hero-link" href="#how-it-works">See how it works <span aria-hidden="true">↓</span></a>
+                <?php if (!$currentUser || $currentUser['role'] !== 'admin'): ?>
+                    <a class="hero-link" href="#how-it-works">See how it works <span aria-hidden="true">↓</span></a>
+                <?php endif; ?>
             </div>
             <div class="hero-art" aria-hidden="true">
                 <div class="orbit orbit-one"></div>
@@ -866,7 +887,7 @@ $steps = [
                             <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
                             <input type="hidden" name="action" value="admin_add_student">
                             <label>Student name<input name="display_name" maxlength="100" required></label>
-                            <label>Username <span class="label-hint">Uppercase is preserved; sign-in ignores case.</span><input name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" required></label>
+                            <label>Username<input name="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9._\-]+" required></label>
                             <label class="form-wide">Student password <span class="label-hint">(any password, up to 72 characters)</span><input type="password" name="password" maxlength="72" required></label>
                             <button class="button button-primary form-wide" type="submit">Add student</button>
                         </form>
@@ -1099,6 +1120,12 @@ $steps = [
                                     <?php else: ?>
                                         <p class="notice notice-error" role="alert">This archived result could not be displayed.</p>
                                     <?php endif; ?>
+                                    <form method="post" class="archive-delete-form" data-confirm-delete="Permanently delete this archived election? This cannot be undone.">
+                                        <input type="hidden" name="csrf_token" value="<?= h($csrfToken) ?>">
+                                        <input type="hidden" name="action" value="admin_delete_archive">
+                                        <input type="hidden" name="archive_id" value="<?= (int) $archive['id'] ?>">
+                                        <button class="button button-danger" type="submit">Delete archive</button>
+                                    </form>
                                 </details>
                             <?php endforeach; ?>
                         </div>
@@ -1179,6 +1206,7 @@ $steps = [
             <?php endif; ?>
         </section>
 
+        <?php if (!$currentUser || $currentUser['role'] !== 'admin'): ?>
         <section class="process section-wrap" id="how-it-works" aria-labelledby="process-title">
             <div class="section-heading">
                 <div>
@@ -1200,7 +1228,9 @@ $steps = [
                 <?php endforeach; ?>
             </ol>
         </section>
+        <?php endif; ?>
 
+        <?php if (!$currentUser || $currentUser['role'] !== 'admin'): ?>
         <section class="why section-wrap" id="why-it-works" aria-label="Built for a smooth election">
             <div class="why-block">
                 <span class="why-symbol people-symbol" aria-hidden="true">
@@ -1230,6 +1260,7 @@ $steps = [
                 <p>So every student voice has a chance to be heard.</p>
             </div>
         </section>
+        <?php endif; ?>
     </main>
 
     <footer class="site-footer">
